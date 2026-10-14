@@ -8,7 +8,7 @@ try:
     import gi
     gi.require_version('Gtk', '3.0')
     from gi.repository import GLib, Gtk
-except ImportError:
+except (ImportError, ValueError):
     gi = None
     Gtk = None
     GLib = None
@@ -76,7 +76,7 @@ def validate_delays(initial_delay, min_delay, max_delay, pause_delay_min, pause_
 
 def _ui_call(func, *args):
     if GLib is not None:
-        GLib.idle_add(func, *args)
+        GLib.idle_add(lambda: (func(*args), False)[1])
     else:
         func(*args)
 
@@ -142,7 +142,7 @@ def start_typing(button):
 
             typing_start_time = time.time()
             total_pause_time = 0.0
-            char_count = 0
+            chars_since_pause = 0
 
             for i, char in enumerate(text):
                 if stop_typing:
@@ -152,8 +152,11 @@ def start_typing(button):
                 typed_char = get_typo(char) if random.random() < typo_chance else char
 
                 subprocess.run(['ydotool', 'type', '--', typed_char], check=True)
+                if stop_typing:
+                    _ui_call(status_label.set_text, "Typing stopped.")
+                    return
 
-                char_count += 1
+                chars_since_pause += 1
                 total_chars += 1
 
                 # When a space or the last character is reached, increment word count
@@ -161,20 +164,29 @@ def start_typing(button):
                     if random.random() < pause_chance:
                         pause_duration = random.uniform(pause_delay_min, pause_delay_max)
                         _interruptible_sleep(pause_duration)
+                        if stop_typing:
+                            _ui_call(status_label.set_text, "Typing stopped.")
+                            return
                         total_pause_time += pause_duration
 
                     total_words += 1
 
                 # Add random delay between characters to simulate human typing
                 _interruptible_sleep(random.uniform(min_delay, max_delay))
+                if stop_typing:
+                    _ui_call(status_label.set_text, "Typing stopped.")
+                    return
 
                 # Introduce pause after a certain number of characters typed
-                if char_count >= chars_until_pause:
-                    char_count = 0
+                if chars_since_pause >= chars_until_pause:
+                    chars_since_pause = 0
                     chars_until_pause = random.randint(40, 60)
                     if random.random() < pause_chance:
                         pause_duration = random.uniform(pause_delay_min, pause_delay_max)
                         _interruptible_sleep(pause_duration)
+                        if stop_typing:
+                            _ui_call(status_label.set_text, "Typing stopped.")
+                            return
                         total_pause_time += pause_duration
 
                 total_typing_time = time.time() - typing_start_time
