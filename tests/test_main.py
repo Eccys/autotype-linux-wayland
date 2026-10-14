@@ -159,3 +159,21 @@ def test_stop_typing_keeps_stopped_status(monkeypatch):
     assert main.status_label.text == "Typing stopped."
     assert main.start_button.sensitive is True
     assert main.stop_button.sensitive is False
+
+
+def test_ui_call_glib_idle_add_returns_false(monkeypatch):
+    scheduled = []
+
+    class DummyGLib:
+        @staticmethod
+        def idle_add(cb):
+            scheduled.append(cb)
+
+    monkeypatch.setattr(main, "GLib", DummyGLib)
+    received = []
+    main._ui_call(lambda x: (received.append(x), True)[1], "hello")
+    assert len(scheduled) == 1
+    # Even when the inner function returns True, the idle callback must return False (SOURCE_REMOVE)
+    assert scheduled[0]() is False
+    assert received == ["hello"]
+
