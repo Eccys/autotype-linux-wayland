@@ -1,4 +1,10 @@
+from pathlib import Path
+import subprocess
+import sys
+
 import pytest
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import main
 
@@ -57,22 +63,44 @@ class DummyTextView:
         return self._buf
 
 
-def test_typo_chance_zero_humanization():
+def _setup_ui(text="hi - there", initial="0", min_d="0", max_d="0", p_min="0", p_max="0", hum=0, pause_freq=0):
+    main.initial_delay_entry = DummyEntry(initial)
+    main.min_delay_entry = DummyEntry(min_d)
+    main.max_delay_entry = DummyEntry(max_d)
+    main.pause_delay_min_entry = DummyEntry(p_min)
+    main.pause_delay_max_entry = DummyEntry(p_max)
+    main.humanization_scale = DummyScale(hum)
+    main.random_pause_scale = DummyScale(pause_freq)
+    main.text_box = DummyTextView(text)
+    main.status_label = DummyLabel()
+    main.wpm_label = DummyLabel()
+    main.start_button = DummyButton()
+    main.stop_button = DummyButton()
+    main.GLib = None
+
+
+def test_typo_chance_zero_and_edge_humanization():
     assert main.calculate_typo_chance(0) == 0.0
     assert main.calculate_typo_chance(-1) == 0.0
+    assert main.calculate_typo_chance(float("nan")) == 0.0
+    assert main.calculate_typo_chance(float("inf")) == 0.0
+    assert main.calculate_typo_chance(1) == 0.005
     assert main.calculate_typo_chance(5) == 0.01
+    assert main.calculate_typo_chance(1000) == 1.0
 
 
 def test_get_typo_preserves_case_and_non_alpha():
-    typo_lower = main.get_typo("a")
-    assert typo_lower in main.KEYBOARD_NEARBY_CHARS["a"]
-    assert typo_lower.islower()
+    for ch, neighbors in main.KEYBOARD_NEARBY_CHARS.items():
+        typo_lower = main.get_typo(ch)
+        assert typo_lower in neighbors
+        assert typo_lower.islower()
 
-    typo_upper = main.get_typo("A")
-    assert typo_upper.lower() in main.KEYBOARD_NEARBY_CHARS["a"]
-    assert typo_upper.isupper()
+        typo_upper = main.get_typo(ch.upper())
+        assert typo_upper.lower() in neighbors
+        assert typo_upper.isupper()
 
     assert main.get_typo("!") == "!"
+    assert main.get_typo("9") == "9"
 
 
 def test_validate_delays_edge_cases():
@@ -81,6 +109,8 @@ def test_validate_delays_edge_cases():
         main.validate_delays(-1.0, 0.01, 0.02, 0.1, 0.2)
     with pytest.raises(ValueError, match="non-negative"):
         main.validate_delays(float("nan"), 0.01, 0.02, 0.1, 0.2)
+    with pytest.raises(ValueError, match="non-negative"):
+        main.validate_delays(float("inf"), 0.01, 0.02, 0.1, 0.2)
     with pytest.raises(ValueError, match="Min delay"):
         main.validate_delays(1.0, 0.5, 0.1, 0.1, 0.2)
     with pytest.raises(ValueError, match="Pause Delay"):
@@ -88,19 +118,7 @@ def test_validate_delays_edge_cases():
 
 
 def test_start_typing_runs_and_stops_cleanly(monkeypatch):
-    main.initial_delay_entry = DummyEntry("0")
-    main.min_delay_entry = DummyEntry("0")
-    main.max_delay_entry = DummyEntry("0")
-    main.pause_delay_min_entry = DummyEntry("0")
-    main.pause_delay_max_entry = DummyEntry("0")
-    main.humanization_scale = DummyScale(0)
-    main.random_pause_scale = DummyScale(0)
-    main.text_box = DummyTextView("hi - there")
-    main.status_label = DummyLabel()
-    main.wpm_label = DummyLabel()
-    main.start_button = DummyButton()
-    main.stop_button = DummyButton()
-    main.GLib = None
+    _setup_ui(text="hi - there")
 
     calls = []
     monkeypatch.setattr(
@@ -127,19 +145,7 @@ def test_start_typing_runs_and_stops_cleanly(monkeypatch):
 
 
 def test_stop_typing_keeps_stopped_status(monkeypatch):
-    main.initial_delay_entry = DummyEntry("0")
-    main.min_delay_entry = DummyEntry("0")
-    main.max_delay_entry = DummyEntry("0")
-    main.pause_delay_min_entry = DummyEntry("0")
-    main.pause_delay_max_entry = DummyEntry("0")
-    main.humanization_scale = DummyScale(0)
-    main.random_pause_scale = DummyScale(0)
-    main.text_box = DummyTextView("hello")
-    main.status_label = DummyLabel()
-    main.wpm_label = DummyLabel()
-    main.start_button = DummyButton()
-    main.stop_button = DummyButton()
-    main.GLib = None
+    _setup_ui(text="hello")
 
     def stop_on_first_char(cmd, check=False):
         main.stop_typing_action(None)
@@ -161,6 +167,76 @@ def test_stop_typing_keeps_stopped_status(monkeypatch):
     assert main.stop_button.sensitive is False
 
 
+def test_start_typing_validation_and_empty_text():
+    _setup_ui(text="hello", initial="not-a-number")
+    main.start_typing(None)
+    assert main.status_label.text == "Invalid delay. Please enter numbers."
+
+    _setup_ui(text="hello", min_d="0.5", max_d="0.1")
+    main.start_typing(None)
+    assert "Min delay cannot exceed Max delay" in main.status_label.text
+
+    _setup_ui(text="   \n\t  ")
+    main.start_typing(None)
+    assert main.status_label.text == "Please enter text to type."
+
+
+def test_start_typing_handles_missing_ydotool_and_subprocess_error(monkeypatch):
+    class SyncThread:
+        def __init__(self, target, daemon=False):
+            self.target = target
+
+        def start(self):
+            self.target()
+
+    monkeypatch.setattr(main.threading, "Thread", SyncThread)
+
+    _setup_ui(text="hi")
+
+    def raise_fnf(cmd, check=False):
+        raise FileNotFoundError("ydotool")
+
+    monkeypatch.setattr(main.subprocess, "run", raise_fnf)
+    main.start_typing(None)
+    assert main.status_label.text == "Error: 'ydotool' not found in PATH."
+    assert main.start_button.sensitive is True
+    assert main.stop_button.sensitive is False
+
+    _setup_ui(text="hi")
+
+    def raise_subproc(cmd, check=False):
+        raise subprocess.CalledProcessError(1, cmd)
+
+    monkeypatch.setattr(main.subprocess, "run", raise_subproc)
+    main.start_typing(None)
+    assert "Error running ydotool:" in main.status_label.text
+    assert main.start_button.sensitive is True
+    assert main.stop_button.sensitive is False
+
+
+def test_interruptible_sleep_and_slider_labels(monkeypatch):
+    sleeps = []
+    monkeypatch.setattr(main.time, "sleep", lambda d: sleeps.append(d))
+    main.stop_typing = False
+    main._interruptible_sleep(0.0)
+    main._interruptible_sleep(-1.0)
+    main._interruptible_sleep(float("nan"))
+    assert sleeps == []
+
+    main.initial_delay_label = DummyLabel()
+    main.min_delay_label = DummyLabel()
+    main.max_delay_label = DummyLabel()
+    main.pause_delay_min_label = DummyLabel()
+    main.pause_delay_max_label = DummyLabel()
+    main.humanization_label = DummyLabel()
+    main.random_pause_label = DummyLabel()
+    _setup_ui(initial="2", min_d="0.05", max_d="0.2", p_min="1", p_max="3", hum=4, pause_freq=6)
+    main.update_slider_values()
+    assert main.initial_delay_label.text == "Initial Delay (seconds): 2"
+    assert main.humanization_label.text == "Humanization Level (0-10): 4"
+    assert main.random_pause_label.text == "Random Pause Frequency (0-10): 6"
+
+
 def test_ui_call_glib_idle_add_returns_false(monkeypatch):
     scheduled = []
 
@@ -176,4 +252,5 @@ def test_ui_call_glib_idle_add_returns_false(monkeypatch):
     # Even when the inner function returns True, the idle callback must return False (SOURCE_REMOVE)
     assert scheduled[0]() is False
     assert received == ["hello"]
+
 

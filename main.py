@@ -58,9 +58,9 @@ def get_typo(char):
 
 def calculate_typo_chance(humanization_level):
     """Calculate typo probability from humanization level (0 disables typos)."""
-    if humanization_level <= 0:
+    if not math.isfinite(humanization_level) or humanization_level <= 0:
         return 0.0
-    return max(0.005, humanization_level * 0.002)
+    return min(1.0, max(0.005, humanization_level * 0.002))
 
 
 def validate_delays(initial_delay, min_delay, max_delay, pause_delay_min, pause_delay_max):
@@ -83,7 +83,9 @@ def _ui_call(func, *args):
 
 def _interruptible_sleep(duration):
     """Sleep in small increments so stop_typing is respected promptly."""
-    end_time = time.time() + max(0.0, duration)
+    if not math.isfinite(duration) or duration <= 0:
+        return
+    end_time = time.time() + duration
     while not stop_typing:
         remaining = end_time - time.time()
         if remaining <= 0:
@@ -159,8 +161,11 @@ def start_typing(button):
                 chars_since_pause += 1
                 total_chars += 1
 
-                # When a space or the last character is reached, increment word count
-                if char == ' ' or i == len(text) - 1:
+                # When a word boundary or the last character is reached, increment word count
+                is_word_end = (char.isspace() and i > 0 and not text[i - 1].isspace()) or (
+                    i == len(text) - 1 and not char.isspace()
+                )
+                if is_word_end:
                     if random.random() < pause_chance:
                         pause_duration = random.uniform(pause_delay_min, pause_delay_max)
                         _interruptible_sleep(pause_duration)
