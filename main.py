@@ -105,8 +105,8 @@ def start_typing(button):
         max_delay = float(max_delay_entry.get_text())
         pause_delay_min = float(pause_delay_min_entry.get_text())
         pause_delay_max = float(pause_delay_max_entry.get_text())
-        humanization_level = int(humanization_scale.get_value())
-        random_pause_frequency = int(random_pause_scale.get_value())
+        humanization_level = round(float(humanization_scale.get_value()))
+        random_pause_frequency = round(float(random_pause_scale.get_value()))
         validate_delays(initial_delay, min_delay, max_delay, pause_delay_min, pause_delay_max)
     except ValueError as exc:
         status_label.set_text(str(exc) if "delay" in str(exc).lower() else "Invalid delay. Please enter numbers.")
@@ -139,7 +139,7 @@ def start_typing(button):
             _ui_call(status_label.set_text, "Typing in progress...")
 
             typo_chance = calculate_typo_chance(humanization_level)
-            pause_chance = random_pause_frequency / 100.0
+            pause_chance = min(1.0, max(0.0, random_pause_frequency / 100.0)) if math.isfinite(random_pause_frequency) else 0.0
             chars_until_pause = random.randint(40, 60)
 
             typing_start_time = time.time()
@@ -230,8 +230,8 @@ def update_slider_values(widget=None):
     max_delay_label.set_text(f"Max Delay (seconds): {max_delay_entry.get_text()}")
     pause_delay_min_label.set_text(f"Pause Delay Min (seconds): {pause_delay_min_entry.get_text()}")
     pause_delay_max_label.set_text(f"Pause Delay Max (seconds): {pause_delay_max_entry.get_text()}")
-    humanization_label.set_text(f"Humanization Level (0-10): {int(humanization_scale.get_value())}")
-    random_pause_label.set_text(f"Random Pause Frequency (0-10): {int(random_pause_scale.get_value())}")
+    humanization_label.set_text(f"Humanization Level (0-10): {round(float(humanization_scale.get_value()))}")
+    random_pause_label.set_text(f"Random Pause Frequency (0-10): {round(float(random_pause_scale.get_value()))}")
 
 
 if __name__ == "__main__":

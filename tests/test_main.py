@@ -230,11 +230,61 @@ def test_interruptible_sleep_and_slider_labels(monkeypatch):
     main.pause_delay_max_label = DummyLabel()
     main.humanization_label = DummyLabel()
     main.random_pause_label = DummyLabel()
-    _setup_ui(initial="2", min_d="0.05", max_d="0.2", p_min="1", p_max="3", hum=4, pause_freq=6)
+    _setup_ui(initial="2", min_d="0.05", max_d="0.2", p_min="1", p_max="3", hum=4.9999999, pause_freq=5.9999999)
     main.update_slider_values()
     assert main.initial_delay_label.text == "Initial Delay (seconds): 2"
-    assert main.humanization_label.text == "Humanization Level (0-10): 4"
+    assert main.humanization_label.text == "Humanization Level (0-10): 5"
     assert main.random_pause_label.text == "Random Pause Frequency (0-10): 6"
+
+    # Positive duration sleep and mid-sleep stop_typing interruption
+    clock = [100.0]
+
+    def fake_time():
+        return clock[0]
+
+    def fake_sleep(d):
+        sleeps.append(round(d, 4))
+        clock[0] += d
+        if len(sleeps) >= 2:
+            main.stop_typing = True
+
+    monkeypatch.setattr(main.time, "time", fake_time)
+    monkeypatch.setattr(main.time, "sleep", fake_sleep)
+    main.stop_typing = False
+    main._interruptible_sleep(0.25)
+    assert sleeps == [0.05, 0.05]
+
+
+def test_start_typing_typos_word_pauses_and_char_interval_pauses(monkeypatch):
+    # 45+ chars with multiple whitespace boundaries to trigger word and char-interval pauses
+    text = ("word1   word2\n\tword3 " * 3).strip()
+    _setup_ui(text=text, initial="0", min_d="0.01", max_d="0.01", p_min="0.02", p_max="0.02", hum=10, pause_freq=100)
+
+    clock = [1000.0]
+    monkeypatch.setattr(main.time, "time", lambda: clock[0])
+
+    typed_chars = []
+    monkeypatch.setattr(
+        main.subprocess,
+        "run",
+        lambda cmd, check=False: typed_chars.append(cmd[3]),
+    )
+    monkeypatch.setattr(main, "_interruptible_sleep", lambda d: clock.__setitem__(0, clock[0] + max(d, 0.01)))
+    monkeypatch.setattr(main.random, "randint", lambda _a, _b: 40)
+
+    class SyncThread:
+        def __init__(self, target, daemon=False):
+            self.target = target
+
+        def start(self):
+            self.target()
+
+    monkeypatch.setattr(main.threading, "Thread", SyncThread)
+
+    main.start_typing(None)
+    assert main.status_label.text == "Typing complete."
+    assert len(typed_chars) == len(text)
+    assert main.wpm_label.text.startswith("WPM: ")
 
 
 def test_ui_call_glib_idle_add_returns_false(monkeypatch):
